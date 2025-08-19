@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "461222503682",
+    "project_id": "archipelago-d9635",
+    "storage_bucket": "archipelago-d9635.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:461222503682:android:cd6316843ed548aed7ce1b",
+        "android_client_info": {
+          "package_name": "com.soboro.archipelago"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDi-X9aHBP-UPtgjzTYrlBHbam-JDkJktE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,4 +1,5 @@
-using System;                          // ← 추가
+// Assets/02_Scripts/GameRunner.cs
+using System;
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Generic;
@@ -9,30 +10,77 @@ using UnityEngine.SceneManagement;
 
 public class GameRunner : MonoBehaviour, INetworkRunnerCallbacks {
   public NetworkPrefabRef playerPrefab;
+
   [SerializeField] private Transform island;
-  [SerializeField] private float spawnYOffset = 1.05f; // 캡슐 반높이+여유
+  [SerializeField] private Renderer islandRenderer;   // ← 인스펙터에 섬 큐브 Renderer 드래그
+  [SerializeField] private float spawnYOffset = 1.05f;
+  [SerializeField] private bool autoStart = false;
+
   private NetworkRunner runner;
+  private NetworkObject _localPlayer;
+  private Vector3? _savedSpawn = null;
+  private Color?   _savedPlayerColor = null;
+  private Color?   _savedIslandColor = null;
+
+  // 클래스 안 어디든(필드 영역) 추가
+static readonly int PROP_BASE_COLOR = Shader.PropertyToID("_BaseColor");
+static readonly int PROP_COLOR      = Shader.PropertyToID("_Color");
+
+// GameRunner.cs 안에 있던 함수 교체
+static Color GetRendererColor(Renderer r) {
+  if (!r) return Color.white;
+  // 런타임에는 인스턴스 머티리얼에서 직접 읽기
+  var m = Application.isPlaying ? r.material : r.sharedMaterial;
+  if (!m) return Color.white;
+  if (m.HasProperty(PROP_BASE_COLOR)) return m.GetColor(PROP_BASE_COLOR);
+  if (m.HasProperty(PROP_COLOR))      return m.GetColor(PROP_COLOR);
+  return m.color;
+}
+
+static void SetRendererColor(Renderer r, Color c) {
+  if (!r) return;
+  // 런타임에 원본 머티리얼을 건드리지 않도록 인스턴스 사용
+  if (Application.isPlaying) r.material = new Material(r.material);
+  var m = r.material;
+  if (m.HasProperty(PROP_BASE_COLOR)) m.SetColor(PROP_BASE_COLOR, c);
+  else if (m.HasProperty(PROP_COLOR)) m.SetColor(PROP_COLOR, c);
+  else m.color = c;
+}
+
+
+void Awake() {
+  if (!island) island = GameObject.FindWithTag("Island")?.transform; // Island 태그 달아두기
+  if (!islandRenderer && island) islandRenderer = island.GetComponentInChildren<Renderer>();
+}
 
   async void Start() {
-    runner = gameObject.AddComponent<NetworkRunner>();
+    if (autoStart)
+      await BeginWithUser(GetOrCreateUserId());
+  }
+
+  // <-- AuthTMPPanel에서 호출하는 메서드
+  public async System.Threading.Tasks.Task BeginWithUser(string uid) {
+    if (runner && runner.IsRunning) return;
+
+    runner ??= gameObject.AddComponent<NetworkRunner>();
     runner.ProvideInput = true;
     runner.AddCallbacks(this);
 
-    var sceneMgr = gameObject.AddComponent<NetworkSceneManagerDefault>();
+    var sceneMgr = GetComponent<NetworkSceneManagerDefault>()
+                ?? gameObject.AddComponent<NetworkSceneManagerDefault>();
 
-    string userId = GetOrCreateUserId();            // 로컬 고정 ID (추후 Firebase uid로 교체)
-    string sessionName = MakeIslandSession(userId);
+    string sessionName = MakeIslandSession(uid);
 
-var result = await runner.StartGame(new StartGameArgs{
-  GameMode    = GameMode.Host,     // 내 섬일 땐 Host로 직행
-  SessionName = sessionName,
-  Scene       = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
-  SceneManager= sceneMgr
-});
+    var result = await runner.StartGame(new StartGameArgs {
+      GameMode     = GameMode.Host,
+      SessionName  = sessionName,
+      Scene        = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
+      SceneManager = sceneMgr
+    });
 
-Debug.Log(result.Ok
-    ? $"[Fusion] Start OK (Host) session='{sessionName}'"
-    : $"[Fusion] Start FAILED: {result.ShutdownReason}");
+    Debug.Log(result.Ok
+      ? $"[Fusion] Start OK (Host) session='{sessionName}'"
+      : $"[Fusion] Start FAILED: {result.ShutdownReason}");
   }
 
   private static string MakeIslandSession(string userId) {
@@ -42,53 +90,137 @@ Debug.Log(result.Ok
     return "island_" + hex.Substring(0, 12);
   }
 
-  private string GetOrCreateUserId() {              // ← 추가
+  private string GetOrCreateUserId() {
     const string key = "DEMO_USER_ID";
     if (!PlayerPrefs.HasKey(key))
       PlayerPrefs.SetString(key, Guid.NewGuid().ToString("N"));
     return PlayerPrefs.GetString(key);
   }
 
-  private Vector3 GetIslandSpawnPoint() {
-  // 1) 섬 찾기 (필드가 비었으면 Tag로)
-  Transform t = island ? island :
-                GameObject.FindWithTag("Island")?.transform;
+ private Vector3 GetIslandSpawnPoint() {
+  // 섬 Transform 찾기
+  var t = island ? island : GameObject.FindWithTag("Island")?.transform;
   if (!t) return new Vector3(0, 2f, 0);
 
-  // 2) 위에서 아래로 레이캐스트
-  var origin = t.position + Vector3.up * 100f;
-  if (Physics.Raycast(origin, Vector3.down, out var hit, 500f, ~0, QueryTriggerInteraction.Ignore)) {
-    return hit.point + Vector3.up * spawnYOffset;
+  // 섬 윗면 Y와 중심 XZ 계산
+  float topY;
+  Vector3 centerXZ;
+  var col  = t.GetComponentInChildren<Collider>();
+  var rend = islandRenderer ? islandRenderer : t.GetComponentInChildren<Renderer>();
+
+  if (col) {
+    topY = col.bounds.max.y;
+    centerXZ = new Vector3(col.bounds.center.x, 0, col.bounds.center.z);
+  } else if (rend) {
+    topY = rend.bounds.max.y;
+    centerXZ = new Vector3(rend.bounds.center.x, 0, rend.bounds.center.z);
+  } else {
+    topY = t.position.y;
+    centerXZ = new Vector3(t.position.x, 0, t.position.z);
   }
-  // 실패 시 안전값
-  return t.position + Vector3.up * 2f;
-}
 
-public void OnPlayerJoined(NetworkRunner r, PlayerRef player) {
-  if (!r.IsServer) return;
-  var pos = GetIslandSpawnPoint();
-  var obj = r.Spawn(playerPrefab, pos, Quaternion.identity, player);
-
-  // (옵션) 혹시 살짝 떠 있으면 즉시 지면으로 스냅
-  StartCoroutine(SnapToGroundNextFrame(obj));
-}
-
-System.Collections.IEnumerator SnapToGroundNextFrame(NetworkObject obj) {
-  yield return null; // 한 프레임 대기 후
-  if (obj && obj.TryGetComponent(out CharacterController cc)) {
-    // 아래로 짧게 쏴서 바로 붙이기
-    var p = obj.transform.position;
-    if (Physics.Raycast(p + Vector3.up * 0.5f, Vector3.down, out var hit, 2f)) {
-      obj.transform.position = hit.point + Vector3.up * 0.01f;
-    }
+  // 🔴 저장값이 있으면 XZ만 유지하고 Y는 항상 섬 윗면 + 오프셋
+  if (_savedSpawn.HasValue) {
+    var s = _savedSpawn.Value;
+    return new Vector3(s.x, topY + spawnYOffset, s.z);
   }
+
+  // 저장값 없으면 섬 중앙 위
+  return new Vector3(centerXZ.x, topY + spawnYOffset, centerXZ.z);
 }
 
-  // 나머지 콜백들
-  public void OnPlayerLeft(NetworkRunner r, PlayerRef p) {}
+
+  public void OnPlayerJoined(NetworkRunner r, PlayerRef player) {
+    if (!r.IsServer) return;
+    var pos = GetIslandSpawnPoint();
+    var obj = r.Spawn(playerPrefab, pos, Quaternion.identity, player);
+    _localPlayer = obj; // 내 로컬 플레이어 기억
+
+    StartCoroutine(SnapToGroundNextFrame(obj));
+
+   if (_savedPlayerColor.HasValue && obj) {
+  var rend = obj.GetComponentInChildren<Renderer>();
+  if (rend) SetRendererColor(rend, _savedPlayerColor.Value);
+}
+  }
+
+// --- 저장용 현재 상태 조회 ---
+  public Vector3 GetCurrentPlayerPosition() =>
+    _localPlayer ? _localPlayer.transform.position : GetIslandSpawnPoint();
+
+public Color GetCurrentPlayerColor() {
+  if (_localPlayer) {
+    var r = _localPlayer.GetComponentInChildren<Renderer>();
+    if (r) return GetRendererColor(r);
+  }
+  return _savedPlayerColor ?? Color.white;
+}
+
+public Color GetCurrentIslandColor() {
+  return islandRenderer ? GetRendererColor(islandRenderer)
+                        : _savedIslandColor ?? Color.white;
+}
+
   public void OnInput(NetworkRunner r, NetworkInput input) {
-    input.Set(new NetInput{ move = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")) });
+    input.Set(new NetInput {
+      move = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"))
+    });
   }
+
+// 저장된 스폰 지정
+public void SetSpawnOverride(Vector3 pos) {
+  _savedSpawn = pos;
+}
+
+// 플레이어/섬 색 적용 (FIX: 'obj' -> '_localPlayer')
+public void ApplyAppearance(Color playerColor, Color islandColor) {
+  _savedPlayerColor = playerColor;
+  _savedIslandColor = islandColor;
+
+  // 섬 색 즉시 반영
+  if (islandRenderer)
+    SetRendererColor(islandRenderer, islandColor);
+
+  // 플레이어가 이미 스폰되어 있으면 즉시 반영
+  if (_localPlayer) {
+    var rend = _localPlayer.GetComponentInChildren<Renderer>();
+    if (rend) SetRendererColor(rend, playerColor);
+  }
+}
+
+private System.Collections.IEnumerator SnapToGroundNextFrame(NetworkObject obj) {
+  yield return null;
+  if (!obj) yield break;
+
+  // 캐릭터컨트롤러 높이만큼 정확히 올려놓기
+  float half = 1f;
+  if (obj.TryGetComponent(out CharacterController cc))
+    half = Mathf.Max(cc.height * 0.5f, cc.radius);
+
+  // 섬 윗면 Y 다시 계산
+  float topY = 0f;
+  var t = island ? island : GameObject.FindWithTag("Island")?.transform;
+  if (t) {
+    var col  = t.GetComponentInChildren<Collider>();
+    var rend = islandRenderer ? islandRenderer : t.GetComponentInChildren<Renderer>();
+    if (col)  topY = col.bounds.max.y;
+    else if (rend) topY = rend.bounds.max.y;
+    else topY = t.position.y;
+  }
+
+  var p = obj.transform.position;
+  obj.transform.position = new Vector3(p.x, topY + half + 0.02f, p.z);
+
+  // 안전용 레이 한 번 더
+  if (Physics.Raycast(obj.transform.position + Vector3.up * 0.5f,
+                      Vector3.down, out var hit, 2f,
+                      Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)) {
+    obj.transform.position = hit.point + Vector3.up * (half + 0.01f);
+  }
+}
+
+
+  public void OnPlayerLeft(NetworkRunner r, PlayerRef p) {}
   public void OnInputMissing(NetworkRunner r, PlayerRef p, NetworkInput input) {}
   public void OnShutdown(NetworkRunner r, ShutdownReason s) {}
   public void OnConnectedToServer(NetworkRunner r) {}
@@ -106,4 +238,8 @@ System.Collections.IEnumerator SnapToGroundNextFrame(NetworkObject obj) {
   public void OnSceneLoadDone(NetworkRunner r) {}
   public void OnObjectEnterAOI(NetworkRunner r, NetworkObject obj, PlayerRef p) {}
   public void OnObjectExitAOI (NetworkRunner r, NetworkObject obj, PlayerRef p) {}
+
+  void OnDestroy() {
+    if (runner != null) runner.RemoveCallbacks(this);
+  }
 }
