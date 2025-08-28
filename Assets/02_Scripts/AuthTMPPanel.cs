@@ -15,7 +15,10 @@ public class AuthTMPPanel : MonoBehaviour {
   [SerializeField] Button btnSignOut;          // 없어도 됨
   [SerializeField] Toggle showPasswordToggle;  // 없어도 됨
   [SerializeField] TMP_Text statusText;
-  [SerializeField] CanvasGroup buildPanel;   // ← Panel_MusicBox의 CanvasGroup 드래그
+  [SerializeField] CanvasGroup buildPanel; 
+
+  [SerializeField] Toggle buildModeToggle;     // Toggle_BuildMode 드래그
+[SerializeField] CanvasGroup paletteGroup; 
 
   [Header("Game")]
   [SerializeField] GameRunner gameRunner;
@@ -89,10 +92,14 @@ void SignOut() {
   UpdateStatus("Signed out.");
 }
 
-// 공통 유틸
 static void SetCanvas(CanvasGroup g, bool on) {
-  if (!g) return; g.alpha = on ? 1 : 0; g.interactable = on; g.blocksRaycasts = on;
+  if (!g) return;
+  g.alpha = on ? 1f : 0f;
+  g.interactable = on;
+  g.blocksRaycasts = on;
+  Debug.Log($"[UI] SetCanvas({g.name}) => {(on ? "ON" : "OFF")}");
 }
+
 
   async Task OnSignedIn(FirebaseUser user) {
   _currentUid = user.UserId;
@@ -116,6 +123,15 @@ static void SetCanvas(CanvasGroup g, bool on) {
 
   SetPanelVisible(false);                  // 로그인 패널 숨김
   SetCanvas(buildPanel, true);             // 🔹 빌드 UI 표시
+
+  // 🔹 팔레트도 기본 ON으로 시작
+  if (buildModeToggle) {
+    buildModeToggle.SetIsOnWithoutNotify(true);   // UI 갱신(이벤트는 안 쏨)
+    buildModeToggle.onValueChanged.Invoke(true); 
+  }
+  else if (paletteGroup) {
+    SetCanvas(paletteGroup, true);
+  }
 }
 
   // ---------- Autosave ----------
