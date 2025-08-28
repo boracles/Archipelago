@@ -434,8 +434,7 @@ MonoBehaviour:
   snapToGrid: 1
   grid: 1
   gridRelativeToIsland: 1
-  tileHalfHeight: 0.5
-  yOffset: 0.02
+  yOffset: 0
 --- !u!1 &129407060
 GameObject:
   m_ObjectHideFlags: 0
@@ -1741,8 +1740,8 @@ MonoBehaviour:
   showPasswordToggle: {fileID: 0}
   statusText: {fileID: 1357132014}
   buildPanel: {fileID: 2010530528}
-  buildModeToggle: {fileID: 0}
-  paletteGroup: {fileID: 0}
+  buildModeToggle: {fileID: 2055679265}
+  paletteGroup: {fileID: 122541811}
   gameRunner: {fileID: 1362529367}
   dataService: {fileID: 740773892}
   autoStartIslandOnSignIn: 1
@@ -1750,6 +1749,7 @@ MonoBehaviour:
   enableAutoSave: 1
   autosaveInterval: 2
   posThreshold: 0.05
+  useSavedSpawn: 0
   panelGroup: {fileID: 414947142}
 --- !u!225 &414947142
 CanvasGroup:
@@ -2656,7 +2656,7 @@ MonoBehaviour:
     RawGuidValue: cc072ffb7207245cfaf935e5cdd96da2
   island: {fileID: 171380893}
   islandRenderer: {fileID: 962098621}
-  spawnYOffset: 1.05
+  spawnYOffset: 2.05
   autoStart: 0
   musicTilePrefab:
     RawGuidValue: 1df02b21d94c84b1392020defc32216a
@@ -4411,14 +4411,6 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 1804766065985997820, guid: e66e02a87b26c4281be1bebaeff9faee, type: 3}
-      propertyPath: m_LocalScale.x
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 1804766065985997820, guid: e66e02a87b26c4281be1bebaeff9faee, type: 3}
-      propertyPath: m_LocalScale.z
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 1804766065985997820, guid: e66e02a87b26c4281be1bebaeff9faee, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0

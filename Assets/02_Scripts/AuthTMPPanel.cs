@@ -30,6 +30,7 @@ public class AuthTMPPanel : MonoBehaviour {
   [SerializeField] bool  enableAutoSave = true;
   [SerializeField] float autosaveInterval = 2f;   // 초
   [SerializeField] float posThreshold = 0.05f;    // 위치 변화 감지 허용오차
+  [SerializeField] bool useSavedSpawn = false; // 기본 OFF
 
   [SerializeField] CanvasGroup panelGroup;
 
@@ -115,7 +116,7 @@ static void SetCanvas(CanvasGroup g, bool on) {
   var data = await dataService.LoadOrCreate(_currentUid, defSpawn, defPlayerCol, defIslandCol);
   Debug.Log($"[USERDATA] LOAD ok: {JsonUtility.ToJson(data)}");
 
-  gr.SetSpawnOverride(new Vector3(data.spawnX, data.spawnY, data.spawnZ));
+  //gr.SetSpawnOverride(new Vector3(data.spawnX, data.spawnY, data.spawnZ));
   gr.ApplyAppearance(data.playerColor.ToColor(), data.islandColor.ToColor());
 
  if (autoStartIslandOnSignIn) await gr.BeginWithUser(_currentUid);

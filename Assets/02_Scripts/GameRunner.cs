@@ -99,38 +99,34 @@ private static string MakeIslandSession(string userId) {
     return PlayerPrefs.GetString(key);
   }
 
- private Vector3 GetIslandSpawnPoint() {
-  // 섬 Transform 찾기
+private Vector3 GetIslandSpawnPoint() {
+  // 섬 Transform
   var t = island ? island : GameObject.FindWithTag("Island")?.transform;
   if (!t) return new Vector3(0, 2f, 0);
 
-  // 섬 윗면 Y와 중심 XZ 계산
-  float topY;
-  Vector3 centerXZ;
+  // 섬의 콜라이더/렌더러와 바운즈
   var col  = t.GetComponentInChildren<Collider>();
   var rend = islandRenderer ? islandRenderer : t.GetComponentInChildren<Renderer>();
+  var bounds = col ? col.bounds : (rend ? rend.bounds : new Bounds(t.position, t.localScale));
 
-  if (col) {
-    topY = col.bounds.max.y;
-    centerXZ = new Vector3(col.bounds.center.x, 0, col.bounds.center.z);
-  } else if (rend) {
-    topY = rend.bounds.max.y;
-    centerXZ = new Vector3(rend.bounds.center.x, 0, rend.bounds.center.z);
-  } else {
-    topY = t.position.y;
-    centerXZ = new Vector3(t.position.x, 0, t.position.z);
-  }
+  // 섬 윗면 높이와 중앙 XZ
+  float   topY    = bounds.max.y;
+  Vector3 centerXZ = new Vector3(bounds.center.x, 0f, bounds.center.z);
 
-  // 🔴 저장값이 있으면 XZ만 유지하고 Y는 항상 섬 윗면 + 오프셋
+  // 저장된 스폰이 있으면 XZ는 섬 AABB 안으로 클램프해서 사용 (Y는 항상 섬 윗면 + 오프셋)
   if (_savedSpawn.HasValue) {
-    var s = _savedSpawn.Value;
-    return new Vector3(s.x, topY + spawnYOffset, s.z);
+    var s    = _savedSpawn.Value;
+    var half = new Vector2(bounds.extents.x, bounds.extents.z);
+    var cen  = new Vector2(bounds.center.x, bounds.center.z);
+
+    float x = Mathf.Clamp(s.x, cen.x - half.x, cen.x + half.x);
+    float z = Mathf.Clamp(s.z, cen.y - half.y, cen.y + half.y);
+    return new Vector3(x, topY + spawnYOffset, z);
   }
 
   // 저장값 없으면 섬 중앙 위
   return new Vector3(centerXZ.x, topY + spawnYOffset, centerXZ.z);
 }
-
 
   public void OnPlayerJoined(NetworkRunner r, PlayerRef player) {
     if (!r.IsServer) return;
@@ -192,34 +188,38 @@ public void ApplyAppearance(Color playerColor, Color islandColor) {
 }
 
 private System.Collections.IEnumerator SnapToGroundNextFrame(NetworkObject obj) {
-  yield return null;
+  // 물리 한 틱 기다려서 콜라이더/씬 셋업 다 끝난 다음 고정
+  yield return new WaitForFixedUpdate();
   if (!obj) yield break;
 
-  // 캐릭터컨트롤러 높이만큼 정확히 올려놓기
-  float half = 1f;
-  if (obj.TryGetComponent(out CharacterController cc))
-    half = Mathf.Max(cc.height * 0.5f, cc.radius);
+  var cc = obj.GetComponent<CharacterController>();
+  float half = cc ? Mathf.Max(cc.height * 0.5f, cc.radius) : 1f;
 
-  // 섬 윗면 Y 다시 계산
+  // 섬 윗면 Y
   float topY = 0f;
-  var t = island ? island : GameObject.FindWithTag("Island")?.transform;
-  if (t) {
-    var col  = t.GetComponentInChildren<Collider>();
-    var rend = islandRenderer ? islandRenderer : t.GetComponentInChildren<Renderer>();
-    if (col)  topY = col.bounds.max.y;
-    else if (rend) topY = rend.bounds.max.y;
-    else topY = t.position.y;
+  if (islandRenderer)          topY = islandRenderer.bounds.max.y;
+  else if (island) {
+    var col = island.GetComponentInChildren<Collider>();
+    topY = col ? col.bounds.max.y : island.position.y;
   }
+
+  // ✅ CC 잠시 비활성 → 정확한 Y로 못박기 → 재활성 + 미량 하강 Move로 접지 확정
+  if (cc) cc.enabled = false;
 
   var p = obj.transform.position;
   obj.transform.position = new Vector3(p.x, topY + half + 0.02f, p.z);
 
-  // 안전용 레이 한 번 더
-  if (Physics.Raycast(obj.transform.position + Vector3.up * 0.5f,
-                      Vector3.down, out var hit, 2f,
-                      Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)) {
-    obj.transform.position = hit.point + Vector3.up * (half + 0.01f);
+  if (cc) {
+    cc.enabled = true;
+    cc.Move(Vector3.down * 0.01f);   // 첫 프레임에 Grounded 확정
   }
+
+  // 레이어 충돌 디버그
+  int pl = obj.gameObject.layer;
+  int il = island ? island.gameObject.layer : 0;
+  Debug.Log($"[SPAWN] topY={topY:F2}, half={half:F2}, finalY={topY+half+0.02f:F2}, " +
+            $"playerLayer={LayerMask.LayerToName(pl)}, islandLayer={LayerMask.LayerToName(il)}, " +
+            $"collide={!Physics.GetIgnoreLayerCollision(pl,il)}");
 }
 
 // 길 생성
@@ -258,13 +258,17 @@ private static int MakeDeterministicSeed(string uid) {
   return BitConverter.ToInt32(h, 0);
 }
 
-// 타일 1개 스폰
 public bool TrySpawnMusicTile(Vector3 pos, int clipIndex) {
-  if (!runner || !runner.IsServer || !musicTilePrefab.IsValid) return false;
-  var no = runner.Spawn(musicTilePrefab, pos, Quaternion.identity);
-  _musicTiles.Add(no);
-  var mt = no.GetComponent<MusicTile>();
-  if (mt) mt.SetClipIndexServer(clipIndex); // MusicTile에 이 메서드가 있어야 함
+  if (runner == null || !runner.IsRunning) {
+    Debug.LogWarning("[GameRunner] Runner가 아직 시작되지 않았습니다.");
+    return false;
+  }
+
+  var nob  = runner.Spawn(musicTilePrefab, pos, Quaternion.identity);
+  var tile = nob.GetComponent<MusicTile>();
+  if (tile) tile.Init(clipIndex);
+
+  _musicTiles.Add(nob); // 리스트 관리 중이면 추가
   return true;
 }
 

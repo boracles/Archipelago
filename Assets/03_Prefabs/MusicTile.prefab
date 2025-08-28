@@ -111,8 +111,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Size: {x: 1, y: 1.2, z: 1}
+  m_Center: {x: 0, y: 0.6, z: 0}
 --- !u!65 &6921432731401821376
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -177,9 +177,10 @@ MonoBehaviour:
   - {fileID: 8300000, guid: 4d23bdf59a6f74e71a960f7692c58e40, type: 3}
   - {fileID: 8300000, guid: b23ea779734d74e239352a9b9a6dd843, type: 3}
   - {fileID: 8300000, guid: d8fcc11bd061a44ceabc47ed0c0f8afd, type: 3}
+  clipIndex: 0
   targetVolume: 0.5
-  fadeInSeconds: 0.08
-  fadeOutSeconds: 0.15
+  fadeIn: 0.08
+  fadeOut: 0.15
   maxDistance: 18
 --- !u!114 &2205616479410560654
 MonoBehaviour:
@@ -197,8 +198,7 @@ MonoBehaviour:
   ObjectInterest: 1
   Flags: 262145
   NestedObjects: []
-  NetworkedBehaviours:
-  - {fileID: 6451131730411151843}
+  NetworkedBehaviours: []
   ForceRemoteRenderTimeframe: 0
 --- !u!82 &2880934913389768341
 AudioSource:

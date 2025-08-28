@@ -1,89 +1,96 @@
-// Assets/02_Scripts/Music/MusicTile.cs
-using Fusion;
+using System.Collections;
 using UnityEngine;
 
-[RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(BoxCollider))]
-[RequireComponent(typeof(AudioSource))]
-[RequireComponent(typeof(Rigidbody))]
-public class MusicTile : NetworkBehaviour {
-  [Header("Clips")]
-  [SerializeField] AudioClip[] clips;
+[RequireComponent(typeof(AudioSource), typeof(Collider))]
+public class MusicTile : MonoBehaviour
+{
+    [Header("Clips")]
+    public AudioClip[] clips;     // 프리팹에 클립들 등록
+    public int clipIndex;         // 스폰 시 지정됨
 
-  [Header("Audio")]
-  [SerializeField, Range(0f,1f)] float targetVolume = 0.5f;
-  [SerializeField] float fadeInSeconds = 0.08f;
-  [SerializeField] float fadeOutSeconds = 0.15f;
-  [SerializeField] float maxDistance = 18f;
+    [Header("Audio")]
+    [Range(0f,1f)] public float targetVolume = 0.5f;
+    public float fadeIn = 0.08f;
+    public float fadeOut = 0.15f;
+    public float maxDistance = 18f;
 
-  AudioSource _audio;
+    AudioSource _src;
+    bool _armed = true;           // 들어올 때만 1회 재생, 나가면 재장전
+    Coroutine _fadeCo;
 
-  [Networked] int  ClipIndex  { get; set; }
-  [Networked] bool Pressed    { get; set; }
+    void Awake()
+    {
+        _src = GetComponent<AudioSource>();
+        _src.playOnAwake = false;
+        _src.loop = false;
+        _src.spatialBlend = 1f;                 // 3D 사운드
+        _src.rolloffMode = AudioRolloffMode.Logarithmic;
+        _src.maxDistance = maxDistance;
+        _src.volume = 0f;
+        var trig = GetComponent<Collider>();
+        trig.isTrigger = true;                  // 안전장치
+    }
 
-  void Reset() {
-    var col = GetComponent<BoxCollider>();
-    col.isTrigger = true; col.size = new Vector3(1f, 0.2f, 1f);
+    public void Init(int index)
+    {
+        clipIndex = Mathf.Clamp(index, 0, Mathf.Max(0, clips.Length - 1));
+        _src.clip = clips.Length > 0 ? clips[clipIndex] : null;
+    }
 
-    var rb = GetComponent<Rigidbody>();
-    rb.isKinematic = true; rb.useGravity = false;
-  }
+// MusicTile.cs에 추가
+public void SetClipIndexServer(int seed)
+{
+    int count = clips != null ? clips.Length : 0;
+    int idx = count > 0 ? Mathf.Abs(seed) % count : 0;
+    Init(idx); // 내부에서 _src.clip 세팅
+}
 
-  public override void Spawned() {
-    _audio = GetComponent<AudioSource>();
-    _audio.playOnAwake = false;
-    _audio.loop = true;
-    _audio.spatialBlend = 1f;
-    _audio.rolloffMode = AudioRolloffMode.Logarithmic;
-    _audio.maxDistance = maxDistance;
-    _audio.volume = 0f;
+    void OnTriggerEnter(Collider other)
+    {
+        if (!_armed) return;
+        if (!IsPlayer(other)) return;
+        PlayOnce();
+        _armed = false; // 들어올 때 1번만
+    }
 
-    ApplyClipLocal(ClipIndex);
-  }
+    void OnTriggerExit(Collider other)
+    {
+        if (!IsPlayer(other)) return;
+        _armed = true;  // 다시 들어오면 또 1번 재생
+        StartFade(0f, fadeOut);
+    }
 
-  // ----- Trigger (서버에서만 판정) -----
-  void OnTriggerEnter(Collider other) {
-    if (!Object.HasStateAuthority) return;
-    if (!IsPlayer(other)) return;
-    RPC_SetPressed(true);
-  }
-  void OnTriggerExit(Collider other) {
-    if (!Object.HasStateAuthority) return;
-    if (!IsPlayer(other)) return;
-    RPC_SetPressed(false);
-  }
-  bool IsPlayer(Collider c) => c.GetComponentInParent<CharacterController>() != null;
+    bool IsPlayer(Collider c)
+    {
+        // 프로젝트에 맞춰 태그/컴포넌트 아무거나!
+        return c.CompareTag("Player") || c.GetComponent<PlayerController>() != null;
+    }
 
-  // ----- RPC 동기화 -----
-  [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
-  void RPC_SetPressed(bool on) {
-    Pressed = on;
-    if (Pressed && _audio && _audio.clip && !_audio.isPlaying) _audio.Play();
-  }
+    void PlayOnce()
+    {
+        if (_src.clip == null) return;
+        if (_src.isPlaying) _src.Stop();
+        _src.time = 0f;
+        _src.Play();
+        StartFade(targetVolume, fadeIn);
+    }
 
-  [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
-  void RPC_SetClip(int idx) {
-    ClipIndex = idx;
-    ApplyClipLocal(idx);
-  }
+    void StartFade(float to, float dur)
+    {
+        if (_fadeCo != null) StopCoroutine(_fadeCo);
+        _fadeCo = StartCoroutine(FadeTo(to, dur));
+    }
 
-  void ApplyClipLocal(int idx) {
-    if (clips == null || clips.Length == 0 || _audio == null) return;
-    _audio.clip = clips[Mathf.Abs(idx) % clips.Length];
-  }
-
-  // ----- 볼륨 페이드 -----
-  void Update() {
-    if (!_audio) return;
-    float target = Pressed ? targetVolume : 0f;
-    float rate = (Pressed ? (targetVolume / Mathf.Max(0.01f, fadeInSeconds))
-                          : (targetVolume / Mathf.Max(0.01f, fadeOutSeconds)));
-    _audio.volume = Mathf.MoveTowards(_audio.volume, target, rate * Time.deltaTime);
-    if (!Pressed && _audio.isPlaying && _audio.volume <= 0.01f) _audio.Stop();
-  }
-
-  // ----- 서버 전용 설정 API -----
-  public void SetClipIndexServer(int idx) {
-    if (Object.HasStateAuthority) RPC_SetClip(idx);
-  }
+    IEnumerator FadeTo(float to, float dur)
+    {
+        float from = _src.volume;
+        float t = 0f;
+        while (t < dur)
+        {
+            t += Time.deltaTime;
+            _src.volume = Mathf.Lerp(from, to, dur > 0f ? t / dur : 1f);
+            yield return null;
+        }
+        _src.volume = to;
+    }
 }
