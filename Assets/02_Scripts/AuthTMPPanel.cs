@@ -1,4 +1,3 @@
-// Assets/02_Scripts/AuthTMPPanel.cs
 using System.Collections;
 using System.Threading.Tasks;
 using Firebase;
@@ -16,6 +15,7 @@ public class AuthTMPPanel : MonoBehaviour {
   [SerializeField] Button btnSignOut;          // 없어도 됨
   [SerializeField] Toggle showPasswordToggle;  // 없어도 됨
   [SerializeField] TMP_Text statusText;
+  [SerializeField] CanvasGroup buildPanel;   // ← Panel_MusicBox의 CanvasGroup 드래그
 
   [Header("Game")]
   [SerializeField] GameRunner gameRunner;
@@ -39,19 +39,22 @@ public class AuthTMPPanel : MonoBehaviour {
   Color   _lastPlayerCol, _lastIslandCol;
 
   async void Start() {
-    await FirebaseApp.CheckAndFixDependenciesAsync();
-    _auth = FirebaseAuth.DefaultInstance;
+  await FirebaseApp.CheckAndFixDependenciesAsync();
+  _auth = FirebaseAuth.DefaultInstance;
 
-    if (btnLogIn)   btnLogIn.onClick.AddListener(() => _ = LogIn());
-    if (btnSignUp)  btnSignUp.onClick.AddListener(() => _ = SignUp());
-    if (btnSignOut) btnSignOut.onClick.AddListener(SignOut);
-    if (showPasswordToggle) showPasswordToggle.onValueChanged.AddListener(OnToggleShowPassword);
+  // ✅ 먼저 숨김
+  SetCanvas(buildPanel, false);
 
-    if (resumePreviousSession && _auth.CurrentUser != null)
-      await OnSignedIn(_auth.CurrentUser);
-    else
-      UpdateStatus("Please sign in.");
-  }
+  if (btnLogIn)   btnLogIn.onClick.AddListener(() => _ = LogIn());
+  if (btnSignUp)  btnSignUp.onClick.AddListener(() => _ = SignUp());
+  if (btnSignOut) btnSignOut.onClick.AddListener(SignOut);
+  if (showPasswordToggle) showPasswordToggle.onValueChanged.AddListener(OnToggleShowPassword);
+
+  if (resumePreviousSession && _auth.CurrentUser != null)
+    await OnSignedIn(_auth.CurrentUser);     // 여기서 SetCanvas(buildPanel, true) 됨
+  else
+    UpdateStatus("Please sign in.");
+}
 
   void OnToggleShowPassword(bool show) {
     if (!passwordField) return;
@@ -81,8 +84,14 @@ public class AuthTMPPanel : MonoBehaviour {
 void SignOut() {
   StopAutosave();
   _auth?.SignOut();
-  SetPanelVisible(true);          // ← SetActive(true) 대신
+  SetCanvas(buildPanel, false);            // 🔹 빌드 UI 숨김
+  SetPanelVisible(true);                   // 로그인 패널 다시 보이기
   UpdateStatus("Signed out.");
+}
+
+// 공통 유틸
+static void SetCanvas(CanvasGroup g, bool on) {
+  if (!g) return; g.alpha = on ? 1 : 0; g.interactable = on; g.blocksRaycasts = on;
 }
 
   async Task OnSignedIn(FirebaseUser user) {
@@ -102,12 +111,11 @@ void SignOut() {
   gr.SetSpawnOverride(new Vector3(data.spawnX, data.spawnY, data.spawnZ));
   gr.ApplyAppearance(data.playerColor.ToColor(), data.islandColor.ToColor());
 
-  if (autoStartIslandOnSignIn)
-    await gr.BeginWithUser(_currentUid);
-
+ if (autoStartIslandOnSignIn) await gr.BeginWithUser(_currentUid);
   if (enableAutoSave) StartAutosave(gr);
 
-  SetPanelVisible(false);         // ← SetActive(false) 대신
+  SetPanelVisible(false);                  // 로그인 패널 숨김
+  SetCanvas(buildPanel, true);             // 🔹 빌드 UI 표시
 }
 
   // ---------- Autosave ----------

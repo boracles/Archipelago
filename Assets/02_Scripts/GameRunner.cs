@@ -1,4 +1,3 @@
-// Assets/02_Scripts/GameRunner.cs
 using System;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,6 +21,10 @@ public class GameRunner : MonoBehaviour, INetworkRunnerCallbacks {
   private Color?   _savedPlayerColor = null;
   private Color?   _savedIslandColor = null;
 
+  public NetworkPrefabRef musicTilePrefab;   // 인스펙터에 등록
+  private readonly System.Collections.Generic.List<NetworkObject> _musicTiles =
+  new System.Collections.Generic.List<NetworkObject>();
+
   // 클래스 안 어디든(필드 영역) 추가
 static readonly int PROP_BASE_COLOR = Shader.PropertyToID("_BaseColor");
 static readonly int PROP_COLOR      = Shader.PropertyToID("_Color");
@@ -39,14 +42,14 @@ static Color GetRendererColor(Renderer r) {
 
 static void SetRendererColor(Renderer r, Color c) {
   if (!r) return;
-  // 런타임에 원본 머티리얼을 건드리지 않도록 인스턴스 사용
-  if (Application.isPlaying) r.material = new Material(r.material);
-  var m = r.material;
+
+  // renderer.material 접근 시 Unity가 필요하면 1회만 인스턴싱해 줍니다.
+  var m = Application.isPlaying ? r.material : r.sharedMaterial;
+
   if (m.HasProperty(PROP_BASE_COLOR)) m.SetColor(PROP_BASE_COLOR, c);
   else if (m.HasProperty(PROP_COLOR)) m.SetColor(PROP_COLOR, c);
   else m.color = c;
 }
-
 
 void Awake() {
   if (!island) island = GameObject.FindWithTag("Island")?.transform; // Island 태그 달아두기
@@ -58,37 +61,36 @@ void Awake() {
       await BeginWithUser(GetOrCreateUserId());
   }
 
-  // <-- AuthTMPPanel에서 호출하는 메서드
-  public async System.Threading.Tasks.Task BeginWithUser(string uid) {
-    if (runner && runner.IsRunning) return;
+public async System.Threading.Tasks.Task BeginWithUser(string uid) {
+  if (runner && runner.IsRunning) return;
 
-    runner ??= gameObject.AddComponent<NetworkRunner>();
-    runner.ProvideInput = true;
-    runner.AddCallbacks(this);
+  runner ??= gameObject.AddComponent<NetworkRunner>();
+  runner.ProvideInput = true;
+  runner.AddCallbacks(this);
 
-    var sceneMgr = GetComponent<NetworkSceneManagerDefault>()
-                ?? gameObject.AddComponent<NetworkSceneManagerDefault>();
+  var sceneMgr = GetComponent<NetworkSceneManagerDefault>()
+              ?? gameObject.AddComponent<NetworkSceneManagerDefault>();
 
-    string sessionName = MakeIslandSession(uid);
+  string sessionName = MakeIslandSession(uid);
 
-    var result = await runner.StartGame(new StartGameArgs {
-      GameMode     = GameMode.Host,
-      SessionName  = sessionName,
-      Scene        = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
-      SceneManager = sceneMgr
-    });
+  var result = await runner.StartGame(new StartGameArgs {
+    GameMode     = GameMode.Host,
+    SessionName  = sessionName,
+    Scene        = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
+    SceneManager = sceneMgr
+  });
 
-    Debug.Log(result.Ok
-      ? $"[Fusion] Start OK (Host) session='{sessionName}'"
-      : $"[Fusion] Start FAILED: {result.ShutdownReason}");
-  }
+  Debug.Log(result.Ok
+    ? $"[Fusion] Start OK (Host) session='{sessionName}'"
+    : $"[Fusion] Start FAILED: {result.ShutdownReason}");
+}
 
-  private static string MakeIslandSession(string userId) {
-    using var sha1 = SHA1.Create();
-    var hex = BitConverter.ToString(sha1.ComputeHash(Encoding.UTF8.GetBytes(userId)))
-                          .Replace("-", "").ToLowerInvariant();
-    return "island_" + hex.Substring(0, 12);
-  }
+private static string MakeIslandSession(string userId) {
+  using var sha1 = SHA1.Create();
+  var hex = BitConverter.ToString(sha1.ComputeHash(Encoding.UTF8.GetBytes(userId)))
+                        .Replace("-", "").ToLowerInvariant();
+  return "island_" + hex.Substring(0, 12);
+}
 
   private string GetOrCreateUserId() {
     const string key = "DEMO_USER_ID";
@@ -134,7 +136,8 @@ void Awake() {
     if (!r.IsServer) return;
     var pos = GetIslandSpawnPoint();
     var obj = r.Spawn(playerPrefab, pos, Quaternion.identity, player);
-    _localPlayer = obj; // 내 로컬 플레이어 기억
+    if (player == r.LocalPlayer)
+  _localPlayer = obj;
 
     StartCoroutine(SnapToGroundNextFrame(obj));
 
@@ -219,10 +222,74 @@ private System.Collections.IEnumerator SnapToGroundNextFrame(NetworkObject obj) 
   }
 }
 
+// 길 생성
+private void SpawnMusicPath(string uid) {
+  if (!runner || !runner.IsServer) return;
+  CleanupMusicPath();
+
+  var start = GetIslandSpawnPoint();
+  var end   = start + new Vector3(6f, 0f, 6f);  // ← 원하는 방향/길이로 조절
+
+  // 직선 경로로 MusicTile 스폰 (PathUtils는 별도 파일)
+  var tiles = PathUtils.SpawnStraightMusicPath(
+      runner, musicTilePrefab, start, end, 0.9f, 0.02f);
+
+  _musicTiles.AddRange(tiles);
+
+  // uid 기반 고정 시드로 타일마다 다른 클립 고정
+  int seed = MakeDeterministicSeed(uid);
+  for (int i = 0; i < _musicTiles.Count; i++) {
+    var mt = _musicTiles[i]?.GetComponent<MusicTile>();
+    if (mt) mt.SetClipIndexServer(seed + i);
+  }
+}
+
+// 정리
+private void CleanupMusicPath() {
+  if (!runner || !runner.IsServer) return;
+  foreach (var t in _musicTiles) if (t) runner.Despawn(t);
+  _musicTiles.Clear();
+}
+
+// uid → 결정적 시드
+private static int MakeDeterministicSeed(string uid) {
+  using var sha1 = SHA1.Create();
+  var h = sha1.ComputeHash(Encoding.UTF8.GetBytes(uid));
+  return BitConverter.ToInt32(h, 0);
+}
+
+// 타일 1개 스폰
+public bool TrySpawnMusicTile(Vector3 pos, int clipIndex) {
+  if (!runner || !runner.IsServer || !musicTilePrefab.IsValid) return false;
+  var no = runner.Spawn(musicTilePrefab, pos, Quaternion.identity);
+  _musicTiles.Add(no);
+  var mt = no.GetComponent<MusicTile>();
+  if (mt) mt.SetClipIndexServer(clipIndex); // MusicTile에 이 메서드가 있어야 함
+  return true;
+}
+
+// 마지막 타일 되돌리기(1개 삭제)
+public void UndoLastMusicTile() {
+  if (!runner || !runner.IsServer || _musicTiles.Count == 0) return;
+  var last = _musicTiles[_musicTiles.Count - 1];
+  if (last) runner.Despawn(last);
+  _musicTiles.RemoveAt(_musicTiles.Count - 1);
+}
+
+// 전부 삭제
+public void ClearAllMusicTiles() {
+  // 내부에서 Despawn까지 해주는 네 기존 메서드가 있다면 그걸 호출해도 OK
+  if (!runner || !runner.IsServer) return;
+  foreach (var t in _musicTiles) if (t) runner.Despawn(t);
+  _musicTiles.Clear();
+}
+
 
   public void OnPlayerLeft(NetworkRunner r, PlayerRef p) {}
   public void OnInputMissing(NetworkRunner r, PlayerRef p, NetworkInput input) {}
-  public void OnShutdown(NetworkRunner r, ShutdownReason s) {}
+  public void OnShutdown(NetworkRunner r, ShutdownReason s) {
+  CleanupMusicPath();
+}
   public void OnConnectedToServer(NetworkRunner r) {}
   public void OnDisconnectedFromServer(NetworkRunner r, NetDisconnectReason reason) {}
   public void OnConnectRequest(NetworkRunner r, NetworkRunnerCallbackArgs.ConnectRequest req, byte[] token) {}

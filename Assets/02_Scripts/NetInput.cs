@@ -4,4 +4,5 @@ using UnityEngine;
 
 public struct NetInput : INetworkInput {
     public Vector2 move; // WASD/화살표
+    public NetworkBool jump; 
 }

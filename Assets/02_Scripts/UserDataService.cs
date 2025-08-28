@@ -21,6 +21,7 @@ public class UserDataService : MonoBehaviour {
   [SerializeField] string databaseUrl; // 인스펙터에 이미 넣어둔 주소
 
   DatabaseReference _root;
+
   void Awake() {
     var db = string.IsNullOrEmpty(databaseUrl)
       ? FirebaseDatabase.DefaultInstance
